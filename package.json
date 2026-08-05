@@ -75,6 +75,17 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Automatically restart extension host upon environment changes"
+				},
+				"direnv.integratedTerminal.environmentManagement": {
+					"type": "string",
+					"default": "automatic",
+					"enum": [ "automatic", "none" ],
+					"enumItemLabels": [ "Automatic", "None" ],
+					"markdownEnumDescriptions": [
+						"Guess the best way to manage the environment. This usually works well, but may have problems in some situations. For best results, enable shell integration.",
+						"Don't try to manage the environment. Instead, assume your shell hooks into direnv. Your shell initializes like it does outside VS Code. Choose this if direnv is hooked into your shell."
+					],
+					"markdownDescription": "Controls how the extension manages environment variables in the [integrated terminal](https://code.visualstudio.com/docs/terminal/basics).\n\nAutomatic is designed to work well in most situations. For best results, enable [shell integration](https://code.visualstudio.com/docs/terminal/shell-integration) by setting `#terminal.integrated.shellIntegration.enabled#` to `true` and using a supported shell.\n\nIf direnv is [hooked into your shell](https://direnv.net/docs/hook.html), choose None for best results."
 				}
 			}
 		},

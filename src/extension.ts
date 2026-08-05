@@ -2,7 +2,7 @@ import path from 'path'
 import vscode from 'vscode'
 import { Checksum } from './checksum'
 import * as command from './command'
-import config from './config'
+import config, { TerminalEnvironmentManagement } from './config'
 import * as direnv from './direnv'
 import { Data, isInternal } from './direnv'
 import * as status from './status'
@@ -82,6 +82,9 @@ class Direnv implements vscode.Disposable {
 		if (config.path.isAffectedBy(event) || config.extraEnv.isAffectedBy(event)) {
 			await this.reload()
 		}
+		if (config.integratedTerminal.isAffectedBy(event)) {
+			this.reloadFromCache()
+		}
 		if (config.status.isAffectedBy(event)) {
 			this.status.refresh()
 		}
@@ -126,6 +129,11 @@ class Direnv implements vscode.Disposable {
 	async reload() {
 		await this.resetCache()
 		await this.load()
+	}
+
+	reloadFromCache() {
+		const data = this.restoreCache()
+		this.updateEnvironment(data)
 	}
 
 	async reset() {
@@ -234,10 +242,29 @@ class Direnv implements vscode.Disposable {
 			this.environment.delete(key)
 		} else {
 			// can't unset, set to empty instead
-			this.environment.replace(key, value ?? '', {
-				applyAtProcessCreation: true,
-				applyAtShellIntegration: true,
-			})
+			this.environment.replace(key, value ?? '', this.getMutatorOptions(key))
+		}
+	}
+
+	private getMutatorOptions(key: string): vscode.EnvironmentVariableMutatorOptions {
+		switch (config.integratedTerminal.environmentManagement.get()) {
+			case TerminalEnvironmentManagement.Automatic:
+				return {
+					// Internal environment variables are used by direnv for
+					// caching, so applying them would prevent it from running
+					// later if the user hooked it into their shell. But if
+					// shell integration is disabled, we want it to run, since
+					// it's the only way to fix anything that shell
+					// initialization might have messed up after process
+					// creation.
+					applyAtProcessCreation: !isInternal(key),
+					applyAtShellIntegration: true,
+				}
+			case TerminalEnvironmentManagement.None:
+				return {
+					applyAtProcessCreation: false,
+					applyAtShellIntegration: false,
+				}
 		}
 	}
 
