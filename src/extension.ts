@@ -18,7 +18,11 @@ const installationUri = vscode.Uri.parse('https://direnv.net/docs/installation.h
 
 class Direnv implements vscode.Disposable {
 	private output = vscode.window.createOutputChannel('direnv')
-	private backup = new Map<string, string | undefined>()
+
+	/**
+	 * An environment patch that undoes the changes we've applied.
+	 */
+	private backup: EnvironmentPatch = new Map()
 
 	/**
 	 * This event triggers the load process. The goal of the load process is to
@@ -178,7 +182,7 @@ class Direnv implements vscode.Disposable {
 		if (checksum === undefined) return
 		const entries = this.cache.get<EnvCache>(Cached.environment)
 		if (!Array.isArray(entries)) return
-		const patch = new Map(entries.map(([key, value]) => [key, value ?? null]))
+		const patch = new Map(entries.map(([key, value]) => [key, value]))
 		const hash = new Checksum()
 		for (const [key] of patch) {
 			hash.update(key, process.env[key])
@@ -252,8 +256,8 @@ class Direnv implements vscode.Disposable {
 		this.updateWatchers(patch)
 	}
 
-	private updateProcessEnv(key: string, value: string | null | undefined) {
-		if (value === null || value === undefined) {
+	private updateProcessEnv(key: string, value: string | undefined) {
+		if (value === undefined) {
 			// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
 			delete process.env[key]
 		} else {
@@ -261,8 +265,8 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
-	private updateTerminalEnv(key: string, value: string | null) {
-		if (value === null && this.backup.get(key) === undefined) {
+	private updateTerminalEnv(key: string, value: string | undefined) {
+		if (value === undefined && this.backup.get(key) === undefined) {
 			this.environment.delete(key)
 		} else {
 			this.environment.replace(key, value ?? '') // can't unset, set to empty instead

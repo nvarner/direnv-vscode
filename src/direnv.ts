@@ -27,9 +27,9 @@ export class CommandNotFoundError extends Error {
  *
  * The keys in the map are the environment variables that differ between the two
  * environments. The value for a key is the value of the variable in the new
- * environment. A null value means the variable should be unset.
+ * environment. An undefined value means the variable should be unset.
  */
-export type EnvironmentPatch = Map<string, string | null>
+export type EnvironmentPatch = Map<string, string | undefined>
 
 type Watch = {
 	path?: string
