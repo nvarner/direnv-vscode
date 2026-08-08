@@ -1,40 +1,11 @@
 import path from 'path'
 import vscode from 'vscode'
-import { Checksum } from './checksum'
+import { Cache } from './cache'
 import * as command from './command'
 import config from './config'
 import * as direnv from './direnv'
 import { EnvironmentPatch, isInternal } from './direnv'
 import * as status from './status'
-
-/**
- * Keys in the workspace cache
- */
-const enum Cached {
-	/**
-	 * A hash of the environment variables we've changed and their values before
-	 * we changed them. We use this to invalidate the environment cache.
-	 *
-	 * The cache entry has type `string`.
-	 */
-	checksum = 'direnv.checksum',
-
-	/**
-	 * Environment variables we've changed and their most recent values.
-	 *
-	 * The cache entry has type {@link EnvCache}.
-	 */
-	environment = 'direnv.environment',
-
-	/**
-	 * An optional path to a directory to run direnv in. If not set, we default
-	 * to {@link direnv.cwd}.
-	 *
-	 * The cache entry has type `string`.
-	 */
-	cwdOverride = 'direnv.cwdOverride',
-}
-type EnvCache = [string, string | undefined][]
 
 const installationUri = vscode.Uri.parse('https://direnv.net/docs/installation.html')
 
@@ -93,6 +64,7 @@ class Direnv implements vscode.Disposable {
 	private cwdOverride?: string
 
 	private watchers = vscode.Disposable.from()
+	private cache: Cache
 
 	constructor(
 		private context: vscode.ExtensionContext,
@@ -105,18 +77,12 @@ class Direnv implements vscode.Disposable {
 		this.blocked.event((e) => this.onBlocked(e))
 		this.viewBlocked.event((e) => this.onViewBlocked(e))
 		this.didUpdate.event(() => this.onDidUpdate())
+
+		this.cache = new Cache(this.context.workspaceState)
 	}
 
 	private get environment() {
 		return this.context.environmentVariableCollection
-	}
-
-	/**
-	 * Workspace cache. We get a separate cache per VS Code workspace, and the
-	 * cache persists between different VS Code sessions in the same workspace.
-	 */
-	private get cache() {
-		return this.context.workspaceState
 	}
 
 	dispose() {
@@ -197,7 +163,7 @@ class Direnv implements vscode.Disposable {
 	 * applied.
 	 */
 	async reload() {
-		await this.resetCache()
+		await this.cache.clear()
 		await this.load()
 	}
 
@@ -206,7 +172,7 @@ class Direnv implements vscode.Disposable {
 	 */
 	async reset() {
 		this.resetEnvironment()
-		await this.resetCache()
+		await this.cache.clear()
 		await this.load()
 	}
 
@@ -226,41 +192,16 @@ class Direnv implements vscode.Disposable {
 	 * undefined if we think the cache isn't valid or if we never cached it.
 	 */
 	private restoreCache(): EnvironmentPatch | undefined {
-		this.cwdOverride = this.cache.get<string>(Cached.cwdOverride)
-		const checksum = this.cache.get<string>(Cached.checksum)
-		if (checksum === undefined) return
-		const entries = this.cache.get<EnvCache>(Cached.environment)
-		if (!Array.isArray(entries)) return
-		const patch = new Map(entries.map(([key, value]) => [key, value]))
-		const hash = new Checksum()
-		for (const [key] of patch) {
-			hash.update(key, process.env[key])
-		}
-		if (checksum !== hash.digest()) return
-		return patch
+		this.cwdOverride = this.cache.cwdOverride
+		return this.cache.patch
 	}
 
 	/**
 	 * Rebuild the cache with the most recent information.
 	 */
 	private async updateCache() {
-		const hash = new Checksum()
-		const entries: EnvCache = []
-		for (const [key, value] of this.backup) {
-			hash.update(key, value)
-			entries.push([key, process.env[key]])
-		}
-		await this.cache.update(Cached.checksum, hash.digest())
-		await this.cache.update(Cached.environment, entries)
-		await this.cache.update(Cached.cwdOverride, this.cwdOverride)
-	}
-
-	/**
-	 * Empty the cache.
-	 */
-	private async resetCache() {
-		await this.cache.update(Cached.environment, undefined)
-		await this.cache.update(Cached.cwdOverride, undefined)
+		await this.cache.setCwdOverride(this.cwdOverride)
+		await this.cache.setPatchByDiff(this.backup)
 	}
 
 	private createWatcher(file: string) {
@@ -469,7 +410,7 @@ class Direnv implements vscode.Disposable {
 	private async onBlocked(e: direnv.BlockedError) {
 		this.blockedPath = e.path
 		this.resetEnvironment(e.internalPatch)
-		await this.resetCache()
+		await this.cache.clear()
 		this.status.update(status.State.blocked(e.path))
 		const options = ['Allow', 'View']
 		const choice = await vscode.window.showWarningMessage(
