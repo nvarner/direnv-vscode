@@ -4,7 +4,7 @@ import { Checksum } from './checksum'
 import * as command from './command'
 import config from './config'
 import * as direnv from './direnv'
-import { Data, isInternal } from './direnv'
+import { EnvironmentPatch, isInternal } from './direnv'
 import * as status from './status'
 
 const enum Cached {
@@ -19,13 +19,45 @@ const installationUri = vscode.Uri.parse('https://direnv.net/docs/installation.h
 class Direnv implements vscode.Disposable {
 	private output = vscode.window.createOutputChannel('direnv')
 	private backup = new Map<string, string | undefined>()
+
+	/**
+	 * This event triggers the load process. The goal of the load process is to
+	 * ask direnv how we should update the environment, then do it.
+	 */
 	private willLoad = new vscode.EventEmitter<void>()
-	private didLoad = new vscode.EventEmitter<Data>()
+
+	/**
+	 * This event fires when we get an environment patch to apply.
+	 */
+	private didLoad = new vscode.EventEmitter<EnvironmentPatch>()
+
+	/**
+	 * This event fires when the load process completed successfully.
+	 */
 	private loaded = new vscode.EventEmitter<void>()
+
+	/**
+	 * This event fires when an error occurred while invoking direnv.
+	 */
 	private failed = new vscode.EventEmitter<unknown>()
+
+	/**
+	 * This event fires when direnv runs, but blocks the .envrc file
+	 */
 	private blocked = new vscode.EventEmitter<direnv.BlockedError>()
+
+	/**
+	 * This event fires when the user opens a blocked .envrc file
+	 */
 	private viewBlocked = new vscode.EventEmitter<string>()
+
+	/**
+	 * This event fires when we update environment variables that other programs
+	 * might care about. Specifically, the event fires after we update at least
+	 * one environment variable where {@link isInternal} is false.
+	 */
 	private didUpdate = new vscode.EventEmitter<void>()
+
 	private blockedPath?: string
 	private cwdOverride?: string
 	private watchers = vscode.Disposable.from()
@@ -135,24 +167,24 @@ class Direnv implements vscode.Disposable {
 	}
 
 	restore() {
-		const data = this.restoreCache()
-		this.updateEnvironment(data)
+		const patch = this.restoreCache()
+		this.updateEnvironment(patch)
 		void this.load()
 	}
 
-	private restoreCache(): Data | undefined {
+	private restoreCache(): EnvironmentPatch | undefined {
 		this.cwdOverride = this.cache.get<string>(Cached.cwdOverride)
 		const checksum = this.cache.get<string>(Cached.checksum)
 		if (checksum === undefined) return
 		const entries = this.cache.get<EnvCache>(Cached.environment)
 		if (!Array.isArray(entries)) return
-		const data = new Map(entries.map(([key, value]) => [key, value ?? null]))
+		const patch = new Map(entries.map(([key, value]) => [key, value ?? null]))
 		const hash = new Checksum()
-		for (const [key] of data) {
+		for (const [key] of patch) {
 			hash.update(key, process.env[key])
 		}
 		if (checksum !== hash.digest()) return
-		return data
+		return patch
 	}
 
 	private async updateCache() {
@@ -184,21 +216,21 @@ class Direnv implements vscode.Disposable {
 		return watcher
 	}
 
-	private updateWatchers(data?: Data) {
+	private updateWatchers(patch?: EnvironmentPatch) {
 		this.watchers.dispose()
 		if (config.watchForChanges.get()) {
 			this.watchers = vscode.Disposable.from(
-				...direnv.watchedPaths(data).map((it) => this.createWatcher(it)),
+				...direnv.watchedPaths(patch).map((it) => this.createWatcher(it)),
 			)
 		}
 	}
 
-	private updateEnvironment(data?: Data) {
-		if (data === undefined) return
-		// Avoid updating the environment & cleaning out watchers if data is empty
-		// such as when `direnv.dump()` is called twice without changes
-		if (data.size === 0) return
-		for (const [key, value] of data) {
+	private updateEnvironment(patch?: EnvironmentPatch) {
+		if (patch === undefined) return
+		// Avoid updating the environment & cleaning out watchers if patch is
+		// empty such as when `direnv.dump()` is called twice without changes
+		if (patch.size === 0) return
+		for (const [key, value] of patch) {
 			if (!this.backup.has(key)) {
 				// keep the oldest value
 				this.backup.set(key, process.env[key])
@@ -207,17 +239,17 @@ class Direnv implements vscode.Disposable {
 			this.updateTerminalEnv(key, value)
 			this.updateProcessEnv(key, value)
 		}
-		this.updateWatchers(data)
+		this.updateWatchers(patch)
 	}
 
-	private resetEnvironment(data?: Data) {
+	private resetEnvironment(patch?: EnvironmentPatch) {
 		for (const [key, value] of this.backup) {
 			this.updateProcessEnv(key, value)
 		}
 		this.backup.clear()
 		this.environment.clear()
 		this.cwdOverride = undefined
-		this.updateWatchers(data)
+		this.updateWatchers(patch)
 	}
 
 	private updateProcessEnv(key: string, value: string | null | undefined) {
@@ -252,12 +284,15 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
+	/**
+	 * Handle {@link willLoad}
+	 */
 	private async onWillLoad() {
 		this.blockedPath = undefined
 		this.status.update(status.State.loading)
 		try {
-			const data = await direnv.dump(this.cwdOverride)
-			this.didLoad.fire(data)
+			const patch = await direnv.dumpPatch(this.cwdOverride)
+			this.didLoad.fire(patch)
 		} catch (err) {
 			if (err instanceof direnv.BlockedError) {
 				this.blocked.fire(err)
@@ -265,14 +300,22 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
-	private async onDidLoad(data: Data) {
-		this.updateEnvironment(data)
+	/**
+	 * Handle {@link didLoad}
+	 *
+	 * @param patch The environment patch we got from direnv
+	 */
+	private async onDidLoad(patch: EnvironmentPatch) {
+		this.updateEnvironment(patch)
 		await this.updateCache()
 		this.loaded.fire()
-		if ([...data.keys()].every(isInternal)) return
+		if ([...patch.keys()].every(isInternal)) return
 		this.didUpdate.fire()
 	}
 
+	/**
+	 * Handle {@link loaded}
+	 */
 	private onLoaded() {
 		let state = status.State.empty
 		if (this.backup.size) {
@@ -310,6 +353,11 @@ class Direnv implements vscode.Disposable {
 		this.status.update(state)
 	}
 
+	/**
+	 * Handle {@link failed}
+	 *
+	 * @param err The error that occured
+	 */
 	private async onFailed(err: unknown) {
 		this.status.update(status.State.failed)
 		if (err instanceof direnv.CommandNotFoundError) {
@@ -332,9 +380,14 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
+	/**
+	 * Handle {@link blocked}
+	 *
+	 * @param e Error resulting from being blocked
+	 */
 	private async onBlocked(e: direnv.BlockedError) {
 		this.blockedPath = e.path
-		this.resetEnvironment(e.data)
+		this.resetEnvironment(e.patch)
 		await this.resetCache()
 		this.status.update(status.State.blocked(e.path))
 		const options = ['Allow', 'View']
@@ -350,6 +403,11 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
+	/**
+	 * Handle {@link viewBlocked}
+	 *
+	 * @param path The path of the blocked .envrc that the user is viewing
+	 */
 	private async onViewBlocked(path: string) {
 		const choice = await vscode.window.showInformationMessage(
 			`direnv: Allow ${path}?`,
@@ -360,6 +418,9 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
+	/**
+	 * Handle {@link didUpdate}
+	 */
 	private async onDidUpdate() {
 		if (await this.shouldRestart()) {
 			if (vscode.env.remoteName === undefined) {
