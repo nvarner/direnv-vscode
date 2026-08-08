@@ -8,9 +8,17 @@ import config from './config'
 const execFile = promisify(cp.execFile)
 
 export class BlockedError extends Error {
+	/**
+	 *
+	 * @param path The path of the blocked .envrc
+	 * @param internalPatch Patch of internal environment variables. Since we
+	 * were blocked, direnv isn't going to provide a patch of the environment
+	 * variables the user probably cares about, but it will set some internal
+	 * variables to keep track of its own state, which we may want to inspect.
+	 */
 	constructor(
 		public readonly path: string,
-		public readonly patch: EnvironmentPatch,
+		public readonly internalPatch: EnvironmentPatch,
 	) {
 		super(`${path} is blocked`)
 	}
@@ -150,6 +158,14 @@ export function isInternal(key: string) {
 	return key.startsWith('DIRENV_')
 }
 
+/**
+ * Get the paths direnv is watching for changes.
+ *
+ * @param patch The environment patch after running direnv. This should include
+ * internal environment variables, specifically DIRENV_WATCHES. If absent, or
+ * this is undefined, the array of watched paths will be empty.
+ * @returns Array of watched paths
+ */
 export function watchedPaths(patch?: EnvironmentPatch): string[] {
 	if (patch === undefined) return []
 	const watches: Watch[] = decode(patch.get('DIRENV_WATCHES')) ?? []

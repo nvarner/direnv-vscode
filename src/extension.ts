@@ -220,6 +220,13 @@ class Direnv implements vscode.Disposable {
 		return watcher
 	}
 
+	/**
+	 * Watch the same paths direnv is watching for changes.
+	 *
+	 * @param patch The environment patch after running direnv. This should
+	 * include internal environment variables, specifically DIRENV_WATCHES. If
+	 * absent, or this is undefined, we will watch nothing.
+	 */
 	private updateWatchers(patch?: EnvironmentPatch) {
 		this.watchers.dispose()
 		if (config.watchForChanges.get()) {
@@ -246,14 +253,22 @@ class Direnv implements vscode.Disposable {
 		this.updateWatchers(patch)
 	}
 
-	private resetEnvironment(patch?: EnvironmentPatch) {
+	/**
+	 * Reset the state of the environment just like it was when we found it, as
+	 * though we had never loaded or applied anything at all.
+	 *
+	 * @param internalPatch Patch of internal environment variables. We may
+	 * inspect the internal state of direnv, even though we aren't choosing to
+	 * apply its environment changes.
+	 */
+	private resetEnvironment(internalPatch?: EnvironmentPatch) {
 		for (const [key, value] of this.backup) {
 			this.updateProcessEnv(key, value)
 		}
 		this.backup.clear()
 		this.environment.clear()
 		this.cwdOverride = undefined
-		this.updateWatchers(patch)
+		this.updateWatchers(internalPatch)
 	}
 
 	private updateProcessEnv(key: string, value: string | undefined) {
@@ -391,7 +406,7 @@ class Direnv implements vscode.Disposable {
 	 */
 	private async onBlocked(e: direnv.BlockedError) {
 		this.blockedPath = e.path
-		this.resetEnvironment(e.patch)
+		this.resetEnvironment(e.internalPatch)
 		await this.resetCache()
 		this.status.update(status.State.blocked(e.path))
 		const options = ['Allow', 'View']
