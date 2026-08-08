@@ -7,9 +7,31 @@ import * as direnv from './direnv'
 import { EnvironmentPatch, isInternal } from './direnv'
 import * as status from './status'
 
+/**
+ * Keys in the workspace cache
+ */
 const enum Cached {
+	/**
+	 * A hash of the environment variables we've changed and their values before
+	 * we changed them. We use this to invalidate the environment cache.
+	 *
+	 * The cache entry has type `string`.
+	 */
 	checksum = 'direnv.checksum',
+
+	/**
+	 * Environment variables we've changed and their most recent values.
+	 *
+	 * The cache entry has type {@link EnvCache}.
+	 */
 	environment = 'direnv.environment',
+
+	/**
+	 * An optional path to a directory to run direnv in. If not set, we default
+	 * to {@link direnv.cwd}.
+	 *
+	 * The cache entry has type `string`.
+	 */
 	cwdOverride = 'direnv.cwdOverride',
 }
 type EnvCache = [string, string | undefined][]
@@ -63,7 +85,13 @@ class Direnv implements vscode.Disposable {
 	private didUpdate = new vscode.EventEmitter<void>()
 
 	private blockedPath?: string
+
+	/**
+	 * An optional path to a directory to run direnv in. If not set, we default
+	 * to {@link direnv.cwd}.
+	 */
 	private cwdOverride?: string
+
 	private watchers = vscode.Disposable.from()
 
 	constructor(
@@ -83,6 +111,10 @@ class Direnv implements vscode.Disposable {
 		return this.context.environmentVariableCollection
 	}
 
+	/**
+	 * Workspace cache. We get a separate cache per VS Code workspace, and the
+	 * cache persists between different VS Code sessions in the same workspace.
+	 */
 	private get cache() {
 		return this.context.workspaceState
 	}
@@ -159,23 +191,40 @@ class Direnv implements vscode.Disposable {
 		this.willLoad.fire()
 	}
 
+	/**
+	 * Clear the cache and go through the load process again to pick up any new
+	 * changes. We don't preemptively undo any environment changes we've already
+	 * applied.
+	 */
 	async reload() {
 		await this.resetCache()
 		await this.load()
 	}
 
+	/**
+	 * Undo all our changes and load again from scratch.
+	 */
 	async reset() {
 		this.resetEnvironment()
 		await this.resetCache()
 		await this.load()
 	}
 
+	/**
+	 * Immediately set up the environment as well as we can, then kick off the
+	 * load process so we're eventually sure it's set up correctly.
+	 */
 	restore() {
 		const patch = this.restoreCache()
 		this.updateEnvironment(patch)
 		void this.load()
 	}
 
+	/**
+	 * Load what we can from the cache.
+	 * @returns An environment patch close to the one direnv would give us, or
+	 * undefined if we think the cache isn't valid or if we never cached it.
+	 */
 	private restoreCache(): EnvironmentPatch | undefined {
 		this.cwdOverride = this.cache.get<string>(Cached.cwdOverride)
 		const checksum = this.cache.get<string>(Cached.checksum)
@@ -191,6 +240,9 @@ class Direnv implements vscode.Disposable {
 		return patch
 	}
 
+	/**
+	 * Rebuild the cache with the most recent information.
+	 */
 	private async updateCache() {
 		const hash = new Checksum()
 		const entries: EnvCache = []
@@ -203,6 +255,9 @@ class Direnv implements vscode.Disposable {
 		await this.cache.update(Cached.cwdOverride, this.cwdOverride)
 	}
 
+	/**
+	 * Empty the cache.
+	 */
 	private async resetCache() {
 		await this.cache.update(Cached.environment, undefined)
 		await this.cache.update(Cached.cwdOverride, undefined)
@@ -288,6 +343,9 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
+	/**
+	 * Kick off the load process.
+	 */
 	private async load() {
 		await this.try(async () => {
 			await direnv.test()
@@ -450,6 +508,10 @@ class Direnv implements vscode.Disposable {
 		}
 	}
 
+	/**
+	 * Decide if we should restart something so other extensions pick up on
+	 * changes we made.
+	 */
 	private async shouldRestart() {
 		if (config.restart.automatic.get()) return true
 		const choice = await vscode.window.showWarningMessage(
