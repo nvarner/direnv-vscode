@@ -27,9 +27,9 @@ export class CommandNotFoundError extends Error {
  *
  * The keys in the map are the environment variables that differ between the two
  * environments. The value for a key is the value of the variable in the new
- * environment. A null value means the variable should be unset.
+ * environment. An undefined value means the variable should be unset.
  */
-export type EnvironmentPatch = Map<string, string | null>
+export type EnvironmentPatch = Map<string, string | undefined>
 
 type Watch = {
 	path?: string
@@ -142,8 +142,13 @@ function parse(
 	predicate: (key: string) => boolean = () => true,
 ): EnvironmentPatch {
 	if (!stdout) return new Map()
-	const record = JSON.parse(stdout) as Record<string, string>
-	return new Map(Object.entries(record).filter(([key]) => predicate(key)))
+	// Null values mean to unset the environment variable
+	const record = JSON.parse(stdout) as Record<string, string | null>
+	return new Map(
+		Object.entries(record)
+			.filter(([key]) => predicate(key))
+			.map(([key, value]) => [key, value === null ? undefined : value]),
+	)
 }
 
 export function isInternal(key: string) {
