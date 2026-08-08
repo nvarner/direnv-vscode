@@ -10,7 +10,7 @@ const execFile = promisify(cp.execFile)
 export class BlockedError extends Error {
 	constructor(
 		public readonly path: string,
-		public readonly data: Data,
+		public readonly patch: EnvironmentPatch,
 	) {
 		super(`${path} is blocked`)
 	}
@@ -22,7 +22,14 @@ export class CommandNotFoundError extends Error {
 	}
 }
 
-export type Data = Map<string, string | null>
+/**
+ * A patch that turns an old environment to a new one.
+ *
+ * The keys in the map are the environment variables that differ between the two
+ * environments. The value for a key is the value of the variable in the new
+ * environment. A null value means the variable should be unset.
+ */
+export type EnvironmentPatch = Map<string, string | null>
 
 type Watch = {
 	path?: string
@@ -114,7 +121,7 @@ export async function find(): Promise<string> {
 	}
 }
 
-export async function dump(cwdOverride?: string): Promise<Data> {
+export async function dumpPatch(cwdOverride?: string): Promise<EnvironmentPatch> {
 	try {
 		const { stdout } = await direnv(['export', 'json'], undefined, cwdOverride)
 		return parse(stdout)
@@ -130,7 +137,10 @@ export async function dump(cwdOverride?: string): Promise<Data> {
 	}
 }
 
-function parse(stdout: string, predicate: (key: string) => boolean = () => true): Data {
+function parse(
+	stdout: string,
+	predicate: (key: string) => boolean = () => true,
+): EnvironmentPatch {
 	if (!stdout) return new Map()
 	const record = JSON.parse(stdout) as Record<string, string>
 	return new Map(Object.entries(record).filter(([key]) => predicate(key)))
@@ -140,9 +150,9 @@ export function isInternal(key: string) {
 	return key.startsWith('DIRENV_')
 }
 
-export function watchedPaths(data?: Data): string[] {
-	if (data === undefined) return []
-	const watches: Watch[] = decode(data.get('DIRENV_WATCHES')) ?? []
+export function watchedPaths(patch?: EnvironmentPatch): string[] {
+	if (patch === undefined) return []
+	const watches: Watch[] = decode(patch.get('DIRENV_WATCHES')) ?? []
 	return watches.map((it) => it.path ?? it.Path).filter((it): it is string => !!it)
 }
 

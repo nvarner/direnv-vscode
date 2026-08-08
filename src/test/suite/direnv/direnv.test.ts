@@ -26,22 +26,22 @@ describe('direnv in the test workspace', function () {
 	it('dumps the allowed .envrc file', async function () {
 		delete process.env.VARIABLE
 		await direnv.allow(file)
-		const data = await direnv.dump()
-		assert.equal(data.get('VARIABLE'), 'value')
+		const patch = await direnv.dumpPatch()
+		assert.equal(patch.get('VARIABLE'), 'value')
 	})
 
 	it('does not dump the extra environment', async function () {
 		sinon.replace(config.extraEnv, 'get', () => ({ ['VARIABLE']: 'value' }))
 		await direnv.allow(file)
-		const data = await direnv.dump()
-		assert.equal(data.get('VARIABLE'), undefined)
+		const patch = await direnv.dumpPatch()
+		assert.equal(patch.get('VARIABLE'), undefined)
 	})
 
 	it('fails to dump the blocked .envrc file', async function () {
 		await direnv.allow(file)
 		await direnv.block(file)
 		try {
-			await direnv.dump()
+			await direnv.dumpPatch()
 			assert.fail('.envrc should be blocked')
 		} catch (e) {
 			if (e instanceof AssertionError) throw e
@@ -53,8 +53,8 @@ describe('direnv in the test workspace', function () {
 	it('lists the .envrc file as watched', async function () {
 		this.retries(60) // XXX this test is flaky
 		await direnv.allow(file)
-		const data = await direnv.dump()
-		const paths = direnv.watchedPaths(data)
+		const patch = await direnv.dumpPatch()
+		const paths = direnv.watchedPaths(patch)
 		assert.ok(paths.includes(file))
 	})
 
