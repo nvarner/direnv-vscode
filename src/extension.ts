@@ -72,6 +72,7 @@ class Direnv implements vscode.Disposable {
 		this.environment = new EnvironmentService(
 			process.env,
 			this.context.environmentVariableCollection,
+			config.integratedTerminal.environmentManagement.get(),
 		)
 
 		this.direnv = new DirenvService(this.cache.cwdOverride)
@@ -110,6 +111,11 @@ class Direnv implements vscode.Disposable {
 		if (!config.isAffectedBy(event)) return
 		if (config.path.isAffectedBy(event) || config.extraEnv.isAffectedBy(event)) {
 			await this.reload()
+		}
+		if (config.integratedTerminal.isAffectedBy(event)) {
+			this.environment.setTerminalEnvironmentManagement(
+				config.integratedTerminal.environmentManagement.get(),
+			)
 		}
 		if (config.status.isAffectedBy(event)) {
 			this.status.refresh()

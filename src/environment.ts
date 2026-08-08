@@ -1,4 +1,6 @@
 import vscode from 'vscode'
+import { TerminalEnvironmentManagement } from './config'
+import { isInternal } from './direnv'
 
 /**
  * The name of an environment variable.
@@ -59,6 +61,7 @@ export class EnvironmentService {
 	constructor(
 		private processEnvironment: NodeJS.ProcessEnv,
 		private terminalEnvironment: vscode.EnvironmentVariableCollection,
+		private terminalEnvironmentManagement: TerminalEnvironmentManagement,
 	) {}
 
 	applyPatch(patch: EnvironmentPatch): void {
@@ -95,6 +98,20 @@ export class EnvironmentService {
 		this.patchTerminalEnvironment(patch)
 	}
 
+	setTerminalEnvironmentManagement(
+		terminalEnvironmentManagement: TerminalEnvironmentManagement,
+	) {
+		if (this.terminalEnvironmentManagement === terminalEnvironmentManagement) {
+			return
+		}
+
+		this.terminalEnvironmentManagement = terminalEnvironmentManagement
+
+		// Rebuild terminal environment
+		this.terminalEnvironment.clear()
+		this.patchTerminalEnvironment(diffToPatch(this.appliedChanges))
+	}
+
 	/**
 	 * Apply a patch on top of {@link appliedChanges}. For variables which are
 	 * newly modified, we pull the old value from {@link processEnvironment}.
@@ -129,11 +146,33 @@ export class EnvironmentService {
 				this.terminalEnvironment.delete(variable)
 			} else {
 				// can't unset, set to empty instead
-				this.terminalEnvironment.replace(variable, value ?? '', {
-					applyAtProcessCreation: true,
-					applyAtShellIntegration: true,
-				})
+				const options = this.getTerminalMutatorOptions(variable)
+				this.terminalEnvironment.replace(variable, value ?? '', options)
 			}
+		}
+	}
+
+	private getTerminalMutatorOptions(
+		key: string,
+	): vscode.EnvironmentVariableMutatorOptions {
+		switch (this.terminalEnvironmentManagement) {
+			case TerminalEnvironmentManagement.Automatic:
+				return {
+					// Internal environment variables are used by direnv for
+					// caching, so applying them would prevent it from running
+					// later if the user hooked it into their shell. But if
+					// shell integration is disabled, we want it to run, since
+					// it's the only way to fix anything that shell
+					// initialization might have messed up after process
+					// creation.
+					applyAtProcessCreation: !isInternal(key),
+					applyAtShellIntegration: true,
+				}
+			case TerminalEnvironmentManagement.None:
+				return {
+					applyAtProcessCreation: false,
+					applyAtShellIntegration: false,
+				}
 		}
 	}
 

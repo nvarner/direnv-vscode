@@ -67,6 +67,11 @@ function section<T extends object>(path: string[], object: T): Settings<T> {
 	} as Settings<T>
 }
 
+export enum TerminalEnvironmentManagement {
+	Automatic = 'automatic',
+	None = 'none',
+}
+
 export default section([root], {
 	extraEnv: value({}),
 	watchForChanges: value(true),
@@ -78,5 +83,8 @@ export default section([root], {
 	},
 	restart: {
 		automatic: value(false),
+	},
+	integratedTerminal: {
+		environmentManagement: value(TerminalEnvironmentManagement.Automatic),
 	},
 })
