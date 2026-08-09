@@ -51,8 +51,6 @@ class Direnv implements vscode.Disposable {
 	 */
 	private didUpdate = new vscode.EventEmitter<void>()
 
-	private blockedPath?: string
-
 	private watchers = vscode.Disposable.from()
 	private cache: Cache
 	private environment: EnvironmentService
@@ -99,7 +97,7 @@ class Direnv implements vscode.Disposable {
 	}
 
 	didOpen(path: string) {
-		if (this.blockedPath === path) {
+		if (this.direnv.getBlockedPath() === path) {
 			this.viewBlocked.fire(path)
 		}
 	}
@@ -270,7 +268,6 @@ class Direnv implements vscode.Disposable {
 	 * Handle {@link willLoad}
 	 */
 	private async onWillLoad() {
-		this.blockedPath = undefined
 		this.status.update(status.State.loading)
 		try {
 			const patch = await this.direnv.dumpPatch()
@@ -368,7 +365,6 @@ class Direnv implements vscode.Disposable {
 	 * @param e Error resulting from being blocked
 	 */
 	private async onBlocked(e: direnv.BlockedError) {
-		this.blockedPath = e.path
 		this.resetEnvironment(e.internalPatch)
 		await this.cache.clear()
 		this.status.update(status.State.blocked(e.path))

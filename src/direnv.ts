@@ -63,6 +63,13 @@ export function cwd(): string {
 }
 
 export class DirenvService {
+	/**
+	 * The path to the .envrc file that was blocked last time we tried to run
+	 * direnv. Before we ever run direnv, or when direnv doesn't block the
+	 * .envrc file, this is undefined.
+	 */
+	private blockedPath?: string
+
 	constructor(
 		/**
 		 * An optional path to a directory to run direnv in. If not set, we fall
@@ -70,6 +77,10 @@ export class DirenvService {
 		 */
 		public cwdOverride?: string | undefined,
 	) {}
+
+	public getBlockedPath(): string | undefined {
+		return this.blockedPath
+	}
 
 	private async direnv(args: string[], env?: NodeJS.ProcessEnv): Promise<Stdio> {
 		const options: cp.ExecOptionsWithStringEncoding = {
@@ -127,6 +138,8 @@ export class DirenvService {
 	}
 
 	public async dumpPatch(): Promise<EnvironmentPatch> {
+		this.blockedPath = undefined
+
 		try {
 			const { stdout } = await this.direnv(['export', 'json'])
 			return parse(stdout)
@@ -134,8 +147,9 @@ export class DirenvService {
 			if (isStdio(e)) {
 				const found = /direnv: error (?<path>.+) is blocked./.exec(e.stderr)
 				if (found?.groups?.path) {
+					this.blockedPath = found.groups.path
 					// .envrc is blocked, let caller ask user what to do
-					throw new BlockedError(found.groups.path, parse(e.stdout, isInternal))
+					throw new BlockedError(this.blockedPath, parse(e.stdout, isInternal))
 				}
 			}
 			throw e
