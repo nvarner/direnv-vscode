@@ -4,7 +4,7 @@ import { Cache } from './cache'
 import * as command from './command'
 import config from './config'
 import * as direnv from './direnv'
-import { isInternal } from './direnv'
+import { DirenvService, isInternal } from './direnv'
 import * as status from './status'
 import { EnvironmentPatch, EnvironmentService } from './environment'
 
@@ -62,6 +62,7 @@ class Direnv implements vscode.Disposable {
 	private watchers = vscode.Disposable.from()
 	private cache: Cache
 	private environment: EnvironmentService
+	private direnv: DirenvService = new DirenvService()
 
 	constructor(
 		private context: vscode.ExtensionContext,
@@ -90,14 +91,14 @@ class Direnv implements vscode.Disposable {
 
 	async allow(path: string) {
 		await this.try(async () => {
-			await direnv.allow(path)
+			await this.direnv.allow(path)
 			this.willLoad.fire()
 		})
 	}
 
 	async block(path: string) {
 		await this.try(async () => {
-			await direnv.block(path)
+			await this.direnv.block(path)
 			this.willLoad.fire()
 		})
 	}
@@ -119,11 +120,11 @@ class Direnv implements vscode.Disposable {
 	}
 
 	async create() {
-		await this.open(await direnv.create())
+		await this.open(await this.direnv.create())
 	}
 
 	async open(path?: string) {
-		path ??= await direnv.find()
+		path ??= await this.direnv.find()
 		const uri = await uriFor(path)
 		await vscode.commands.executeCommand('vscode.open', uri)
 		this.didOpen(path)
@@ -259,7 +260,7 @@ class Direnv implements vscode.Disposable {
 	 */
 	private async load() {
 		await this.try(async () => {
-			await direnv.test()
+			await this.direnv.test()
 			this.willLoad.fire()
 		})
 	}
@@ -279,7 +280,7 @@ class Direnv implements vscode.Disposable {
 		this.blockedPath = undefined
 		this.status.update(status.State.loading)
 		try {
-			const patch = await direnv.dumpPatch(this.cwdOverride)
+			const patch = await this.direnv.dumpPatch(this.cwdOverride)
 			this.didLoad.fire(patch)
 		} catch (err) {
 			if (err instanceof direnv.BlockedError) {

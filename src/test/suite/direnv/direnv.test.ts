@@ -4,27 +4,28 @@ import sinon from 'sinon'
 
 import { workspaceRoot } from '.'
 import config from '../../../config'
-import * as direnv from '../../../direnv'
+import { BlockedError, CommandNotFoundError, DirenvService, watchedPaths } from '../../../direnv'
 
 describe('direnv in the test workspace', function () {
 	const file = path.resolve(workspaceRoot, '.envrc')
 
 	it('finds the direnv executable', async function () {
-		await direnv.test()
+		await new DirenvService().test()
 	})
 
 	it('finds the .envrc file in the workspace root', async function () {
-		const path = await direnv.find()
+		const path = await new DirenvService().find()
 		assert.equal(path, file)
 	})
 
 	it('reuses the .envrc file in the workspace root', async function () {
-		const path = await direnv.create()
+		const path = await new DirenvService().create()
 		assert.equal(path, file)
 	})
 
 	it('dumps the allowed .envrc file', async function () {
 		delete process.env.VARIABLE
+		const direnv = new DirenvService()
 		await direnv.allow(file)
 		const patch = await direnv.dumpPatch()
 		assert.equal(patch.get('VARIABLE'), 'value')
@@ -32,12 +33,14 @@ describe('direnv in the test workspace', function () {
 
 	it('does not dump the extra environment', async function () {
 		sinon.replace(config.extraEnv, 'get', () => ({ ['VARIABLE']: 'value' }))
+		const direnv = new DirenvService()
 		await direnv.allow(file)
 		const patch = await direnv.dumpPatch()
 		assert.equal(patch.get('VARIABLE'), undefined)
 	})
 
 	it('fails to dump the blocked .envrc file', async function () {
+		const direnv = new DirenvService()
 		await direnv.allow(file)
 		await direnv.block(file)
 		try {
@@ -45,22 +48,23 @@ describe('direnv in the test workspace', function () {
 			assert.fail('.envrc should be blocked')
 		} catch (e) {
 			if (e instanceof AssertionError) throw e
-			assert(e instanceof direnv.BlockedError)
+			assert(e instanceof BlockedError)
 			assert.equal(e.path, file)
 		}
 	})
 
 	it('lists the .envrc file as watched', async function () {
 		this.retries(60) // XXX this test is flaky
+		const direnv = new DirenvService()
 		await direnv.allow(file)
 		const patch = await direnv.dumpPatch()
-		const paths = direnv.watchedPaths(patch)
+		const paths = watchedPaths(patch)
 		assert.ok(paths.includes(file))
 	})
 
 	it('fails when the direnv executable is missing', async function () {
 		const missing = '/missing/executable'
 		sinon.replace(config.path.executable, 'get', () => missing)
-		await assert.rejects(() => direnv.test(), new direnv.CommandNotFoundError(missing))
+		await assert.rejects(() => new DirenvService().test(), new CommandNotFoundError(missing))
 	})
 })

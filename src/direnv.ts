@@ -62,78 +62,80 @@ export function cwd(): string {
 	return vscode.workspace.workspaceFolders?.[0].uri.fsPath ?? os.homedir()
 }
 
-async function direnv(
-	args: string[],
-	env?: NodeJS.ProcessEnv,
-	cwdOverride?: string,
-): Promise<Stdio> {
-	const options: cp.ExecOptionsWithStringEncoding = {
-		encoding: 'utf8',
-		cwd: cwdOverride ?? cwd(),
-		env: {
-			...process.env,
-			['TERM']: 'dumb',
-			...env,
-			...config.extraEnv.get(),
-		},
-	}
-	const command = config.path.executable.get()
-	try {
-		return await execFile(command, args, options)
-	} catch (e) {
-		if (isCommandNotFound(e, command)) {
-			throw new CommandNotFoundError(command)
+export class DirenvService {
+	private async direnv(
+		args: string[],
+		env?: NodeJS.ProcessEnv,
+		cwdOverride?: string,
+	): Promise<Stdio> {
+		const options: cp.ExecOptionsWithStringEncoding = {
+			encoding: 'utf8',
+			cwd: cwdOverride ?? cwd(),
+			env: {
+				...process.env,
+				['TERM']: 'dumb',
+				...env,
+				...config.extraEnv.get(),
+			},
 		}
-		throw e
+		const command = config.path.executable.get()
+		try {
+			return await execFile(command, args, options)
+		} catch (e) {
+			if (isCommandNotFound(e, command)) {
+				throw new CommandNotFoundError(command)
+			}
+			throw e
+		}
 	}
-}
 
-export async function test(): Promise<void> {
-	await direnv(['version'])
-}
+	public async test(): Promise<void> {
+		await this.direnv(['version'])
+	}
 
-export async function allow(path: string): Promise<void> {
-	await direnv(['allow', path])
-}
+	public async allow(path: string): Promise<void> {
+		await this.direnv(['allow', path])
+	}
 
-export async function block(path: string): Promise<void> {
-	await direnv(['deny', path])
-}
+	public async block(path: string): Promise<void> {
+		await this.direnv(['deny', path])
+	}
 
-export async function create(): Promise<string> {
-	const { stdout } = await direnv(['edit', cwd()], echo)
-	return stdout.trimEnd()
-}
-
-export async function find(): Promise<string> {
-	try {
-		const { stdout } = await direnv(['edit'], echo)
+	public async create(): Promise<string> {
+		const { stdout } = await this.direnv(['edit', cwd()], echo)
 		return stdout.trimEnd()
-	} catch (e) {
-		if (isStdio(e)) {
-			const found = /direnv: error (?<path>.+) not found./.exec(e.stderr)
-			if (found) {
-				// .envrc not found, create a new one
-				return create()
-			}
-		}
-		throw e
 	}
-}
 
-export async function dumpPatch(cwdOverride?: string): Promise<EnvironmentPatch> {
-	try {
-		const { stdout } = await direnv(['export', 'json'], undefined, cwdOverride)
-		return parse(stdout)
-	} catch (e) {
-		if (isStdio(e)) {
-			const found = /direnv: error (?<path>.+) is blocked./.exec(e.stderr)
-			if (found?.groups?.path) {
-				// .envrc is blocked, let caller ask user what to do
-				throw new BlockedError(found.groups.path, parse(e.stdout, isInternal))
+	public async find(): Promise<string> {
+		try {
+			const { stdout } = await this.direnv(['edit'], echo)
+			return stdout.trimEnd()
+		} catch (e) {
+			if (isStdio(e)) {
+				const found = /direnv: error (?<path>.+) not found./.exec(e.stderr)
+				if (found) {
+					// .envrc not found, create a new one
+					return this.create()
+				}
 			}
+			throw e
 		}
-		throw e
+	}
+
+	public async dumpPatch(cwdOverride?: string): Promise<EnvironmentPatch> {
+		try {
+			const { stdout } = await this.direnv(['export', 'json'], undefined, cwdOverride)
+			return parse(stdout)
+		} catch (e) {
+			if (isStdio(e)) {
+				const found = /direnv: error (?<path>.+) is blocked./.exec(e.stderr)
+				if (found?.groups?.path) {
+					// .envrc is blocked, let caller ask user what to do
+					throw new BlockedError(found.groups.path, parse(e.stdout, isInternal))
+				}
+			}
+			throw e
+		}
 	}
 }
 
