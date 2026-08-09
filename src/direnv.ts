@@ -4,6 +4,7 @@ import { promisify } from 'util'
 import vscode from 'vscode'
 import zlib from 'zlib'
 import config from './config'
+import { EnvironmentPatch } from './environment'
 
 const execFile = promisify(cp.execFile)
 
@@ -29,15 +30,6 @@ export class CommandNotFoundError extends Error {
 		super(`${path}: command not found`)
 	}
 }
-
-/**
- * A patch that turns an old environment to a new one.
- *
- * The keys in the map are the environment variables that differ between the two
- * environments. The value for a key is the value of the variable in the new
- * environment. An undefined value means the variable should be unset.
- */
-export type EnvironmentPatch = Map<string, string | undefined>
 
 type Watch = {
 	path?: string

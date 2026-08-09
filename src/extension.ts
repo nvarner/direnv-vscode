@@ -4,18 +4,14 @@ import { Cache } from './cache'
 import * as command from './command'
 import config from './config'
 import * as direnv from './direnv'
-import { EnvironmentPatch, isInternal } from './direnv'
+import { isInternal } from './direnv'
 import * as status from './status'
+import { EnvironmentPatch, EnvironmentService } from './environment'
 
 const installationUri = vscode.Uri.parse('https://direnv.net/docs/installation.html')
 
 class Direnv implements vscode.Disposable {
 	private output = vscode.window.createOutputChannel('direnv')
-
-	/**
-	 * An environment patch that undoes the changes we've applied.
-	 */
-	private backup: EnvironmentPatch = new Map()
 
 	/**
 	 * This event triggers the load process. The goal of the load process is to
@@ -65,6 +61,7 @@ class Direnv implements vscode.Disposable {
 
 	private watchers = vscode.Disposable.from()
 	private cache: Cache
+	private environment: EnvironmentService
 
 	constructor(
 		private context: vscode.ExtensionContext,
@@ -79,10 +76,10 @@ class Direnv implements vscode.Disposable {
 		this.didUpdate.event(() => this.onDidUpdate())
 
 		this.cache = new Cache(this.context.workspaceState)
-	}
-
-	private get environment() {
-		return this.context.environmentVariableCollection
+		this.environment = new EnvironmentService(
+			process.env,
+			this.context.environmentVariableCollection,
+		)
 	}
 
 	dispose() {
@@ -181,19 +178,20 @@ class Direnv implements vscode.Disposable {
 	 * load process so we're eventually sure it's set up correctly.
 	 */
 	restore() {
-		const patch = this.restoreCache()
-		this.updateEnvironment(patch)
+		this.restoreCache()
 		void this.load()
 	}
 
 	/**
-	 * Load what we can from the cache.
-	 * @returns An environment patch close to the one direnv would give us, or
-	 * undefined if we think the cache isn't valid or if we never cached it.
+	 * Try to load the extension state from cache.
 	 */
-	private restoreCache(): EnvironmentPatch | undefined {
+	private restoreCache() {
 		this.cwdOverride = this.cache.cwdOverride
-		return this.cache.patch
+
+		const diff = this.cache.environmentDiff
+		if (diff) {
+			this.environment.trySetAppliedChanges(diff)
+		}
 	}
 
 	/**
@@ -201,7 +199,7 @@ class Direnv implements vscode.Disposable {
 	 */
 	private async updateCache() {
 		await this.cache.setCwdOverride(this.cwdOverride)
-		await this.cache.setPatchByDiff(this.backup)
+		await this.cache.setEnvironmentDiff(this.environment.getAppliedChanges())
 	}
 
 	private createWatcher(file: string) {
@@ -234,18 +232,11 @@ class Direnv implements vscode.Disposable {
 
 	private updateEnvironment(patch?: EnvironmentPatch) {
 		if (patch === undefined) return
+		this.environment.applyPatch(patch)
+
 		// Avoid updating the environment & cleaning out watchers if patch is
 		// empty such as when `direnv.dump()` is called twice without changes
 		if (patch.size === 0) return
-		for (const [key, value] of patch) {
-			if (!this.backup.has(key)) {
-				// keep the oldest value
-				this.backup.set(key, process.env[key])
-			}
-
-			this.updateTerminalEnv(key, value)
-			this.updateProcessEnv(key, value)
-		}
 		this.updateWatchers(patch)
 	}
 
@@ -258,34 +249,9 @@ class Direnv implements vscode.Disposable {
 	 * apply its environment changes.
 	 */
 	private resetEnvironment(internalPatch?: EnvironmentPatch) {
-		for (const [key, value] of this.backup) {
-			this.updateProcessEnv(key, value)
-		}
-		this.backup.clear()
-		this.environment.clear()
+		this.environment.reset()
 		this.cwdOverride = undefined
 		this.updateWatchers(internalPatch)
-	}
-
-	private updateProcessEnv(key: string, value: string | undefined) {
-		if (value === undefined) {
-			// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-			delete process.env[key]
-		} else {
-			process.env[key] = value
-		}
-	}
-
-	private updateTerminalEnv(key: string, value: string | undefined) {
-		if (value === undefined && this.backup.get(key) === undefined) {
-			this.environment.delete(key)
-		} else {
-			// can't unset, set to empty instead
-			this.environment.replace(key, value ?? '', {
-				applyAtProcessCreation: true,
-				applyAtShellIntegration: true,
-			})
-		}
 	}
 
 	/**
@@ -340,28 +306,28 @@ class Direnv implements vscode.Disposable {
 	 */
 	private onLoaded() {
 		let state = status.State.empty
-		if (this.backup.size) {
+		const appliedChanges = this.environment.getAppliedChanges()
+		if (appliedChanges.size) {
 			let added = 0
 			let changed = 0
 			let removed = 0
-			for (const [key, was] of this.backup) {
-				if (isInternal(key)) continue
-				if (was === undefined) {
+			for (const [variable, { oldValue, newValue }] of appliedChanges) {
+				if (isInternal(variable)) continue
+				if (oldValue === undefined) {
 					added += 1
-					this.output.appendLine(`added: ${key}`)
-				} else if (key in process.env) {
+					this.output.appendLine(`added: ${variable}`)
+				} else if (variable in process.env) {
 					changed += 1
-					this.output.appendLine(`changed: ${key}`)
+					this.output.appendLine(`changed: ${variable}`)
 				} else {
 					removed += 1
-					this.output.appendLine(`removed: ${key}`)
+					this.output.appendLine(`removed: ${variable}`)
 				}
-				if (was) {
-					this.output.appendLine(`was: ${was}`)
+				if (oldValue) {
+					this.output.appendLine(`was: ${oldValue}`)
 				}
-				const now = process.env[key]
-				if (now) {
-					this.output.appendLine(`now: ${now}`)
+				if (newValue) {
+					this.output.appendLine(`now: ${newValue}`)
 				}
 			}
 
