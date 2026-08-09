@@ -53,16 +53,10 @@ class Direnv implements vscode.Disposable {
 
 	private blockedPath?: string
 
-	/**
-	 * An optional path to a directory to run direnv in. If not set, we default
-	 * to {@link direnv.cwd}.
-	 */
-	private cwdOverride?: string
-
 	private watchers = vscode.Disposable.from()
 	private cache: Cache
 	private environment: EnvironmentService
-	private direnv: DirenvService = new DirenvService()
+	private direnv: DirenvService
 
 	constructor(
 		private context: vscode.ExtensionContext,
@@ -81,6 +75,7 @@ class Direnv implements vscode.Disposable {
 			process.env,
 			this.context.environmentVariableCollection,
 		)
+		this.direnv = new DirenvService(this.cache.cwdOverride)
 	}
 
 	dispose() {
@@ -151,7 +146,7 @@ class Direnv implements vscode.Disposable {
 			await vscode.window.showErrorMessage('direnv: Not a .envrc!')
 			return
 		}
-		this.cwdOverride = path.dirname(uri.path)
+		this.direnv.cwdOverride = path.dirname(uri.path)
 		this.willLoad.fire()
 	}
 
@@ -187,8 +182,6 @@ class Direnv implements vscode.Disposable {
 	 * Try to load the extension state from cache.
 	 */
 	private restoreCache() {
-		this.cwdOverride = this.cache.cwdOverride
-
 		const diff = this.cache.environmentDiff
 		if (diff) {
 			this.environment.trySetAppliedChanges(diff)
@@ -199,7 +192,7 @@ class Direnv implements vscode.Disposable {
 	 * Rebuild the cache with the most recent information.
 	 */
 	private async updateCache() {
-		await this.cache.setCwdOverride(this.cwdOverride)
+		await this.cache.setCwdOverride(this.direnv.cwdOverride)
 		await this.cache.setEnvironmentDiff(this.environment.getAppliedChanges())
 	}
 
@@ -251,7 +244,7 @@ class Direnv implements vscode.Disposable {
 	 */
 	private resetEnvironment(internalPatch?: EnvironmentPatch) {
 		this.environment.reset()
-		this.cwdOverride = undefined
+		this.direnv.cwdOverride = undefined
 		this.updateWatchers(internalPatch)
 	}
 
@@ -280,7 +273,7 @@ class Direnv implements vscode.Disposable {
 		this.blockedPath = undefined
 		this.status.update(status.State.loading)
 		try {
-			const patch = await this.direnv.dumpPatch(this.cwdOverride)
+			const patch = await this.direnv.dumpPatch()
 			this.didLoad.fire(patch)
 		} catch (err) {
 			if (err instanceof direnv.BlockedError) {
@@ -336,7 +329,7 @@ class Direnv implements vscode.Disposable {
 				added,
 				changed,
 				removed,
-				currentFolder: this.cwdOverride,
+				currentFolder: this.direnv.cwdOverride,
 			})
 		}
 		this.status.update(state)

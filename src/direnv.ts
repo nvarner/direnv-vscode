@@ -63,14 +63,18 @@ export function cwd(): string {
 }
 
 export class DirenvService {
-	private async direnv(
-		args: string[],
-		env?: NodeJS.ProcessEnv,
-		cwdOverride?: string,
-	): Promise<Stdio> {
+	constructor(
+		/**
+		 * An optional path to a directory to run direnv in. If not set, we fall
+		 * back to {@link cwd}.
+		 */
+		public cwdOverride?: string | undefined,
+	) {}
+
+	private async direnv(args: string[], env?: NodeJS.ProcessEnv): Promise<Stdio> {
 		const options: cp.ExecOptionsWithStringEncoding = {
 			encoding: 'utf8',
-			cwd: cwdOverride ?? cwd(),
+			cwd: this.workingDirectory,
 			env: {
 				...process.env,
 				['TERM']: 'dumb',
@@ -122,9 +126,9 @@ export class DirenvService {
 		}
 	}
 
-	public async dumpPatch(cwdOverride?: string): Promise<EnvironmentPatch> {
+	public async dumpPatch(): Promise<EnvironmentPatch> {
 		try {
-			const { stdout } = await this.direnv(['export', 'json'], undefined, cwdOverride)
+			const { stdout } = await this.direnv(['export', 'json'])
 			return parse(stdout)
 		} catch (e) {
 			if (isStdio(e)) {
@@ -136,6 +140,10 @@ export class DirenvService {
 			}
 			throw e
 		}
+	}
+
+	private get workingDirectory(): string {
+		return this.cwdOverride ?? cwd()
 	}
 }
 
