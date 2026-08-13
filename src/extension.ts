@@ -73,7 +73,11 @@ class Direnv implements vscode.Disposable {
 			process.env,
 			this.context.environmentVariableCollection,
 		)
+
 		this.direnv = new DirenvService(this.cache.cwdOverride)
+		this.direnv.onUpdateWatchedPaths.event((watchedPaths) =>
+			this.updateWatchers(watchedPaths),
+		)
 	}
 
 	dispose() {
@@ -207,17 +211,16 @@ class Direnv implements vscode.Disposable {
 	}
 
 	/**
-	 * Watch the same paths direnv is watching for changes.
-	 *
-	 * @param patch The environment patch after running direnv. This should
-	 * include internal environment variables, specifically DIRENV_WATCHES. If
-	 * absent, or this is undefined, we will watch nothing.
+	 * Update the paths we're watching to be a new set of paths, if we want to
+	 * watch any paths in the first place.
+	 * @param watchedPaths The set of paths to watch instead of the paths we're
+	 * watching right now.
 	 */
-	private updateWatchers(patch?: EnvironmentPatch) {
+	private updateWatchers(watchedPaths: string[]) {
 		this.watchers.dispose()
 		if (config.watchForChanges.get()) {
 			this.watchers = vscode.Disposable.from(
-				...direnv.watchedPaths(patch).map((it) => this.createWatcher(it)),
+				...watchedPaths.map((it) => this.createWatcher(it)),
 			)
 		}
 	}
@@ -225,25 +228,15 @@ class Direnv implements vscode.Disposable {
 	private updateEnvironment(patch?: EnvironmentPatch) {
 		if (patch === undefined) return
 		this.environment.applyPatch(patch)
-
-		// Avoid updating the environment & cleaning out watchers if patch is
-		// empty such as when `direnv.dump()` is called twice without changes
-		if (patch.size === 0) return
-		this.updateWatchers(patch)
 	}
 
 	/**
 	 * Reset the state of the environment just like it was when we found it, as
 	 * though we had never loaded or applied anything at all.
-	 *
-	 * @param internalPatch Patch of internal environment variables. We may
-	 * inspect the internal state of direnv, even though we aren't choosing to
-	 * apply its environment changes.
 	 */
-	private resetEnvironment(internalPatch?: EnvironmentPatch) {
+	private resetEnvironment() {
 		this.environment.reset()
 		this.direnv.cwdOverride = undefined
-		this.updateWatchers(internalPatch)
 	}
 
 	/**
@@ -365,7 +358,7 @@ class Direnv implements vscode.Disposable {
 	 * @param e Error resulting from being blocked
 	 */
 	private async onBlocked(e: direnv.BlockedError) {
-		this.resetEnvironment(e.internalPatch)
+		this.resetEnvironment()
 		await this.cache.clear()
 		this.status.update(status.State.blocked(e.path))
 		const options = ['Allow', 'View']

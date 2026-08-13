@@ -4,7 +4,7 @@ import sinon from 'sinon'
 
 import { workspaceRoot } from '.'
 import config from '../../../config'
-import { BlockedError, CommandNotFoundError, DirenvService, watchedPaths } from '../../../direnv'
+import { BlockedError, CommandNotFoundError, DirenvService, extractWatchedPaths } from '../../../direnv'
 
 describe('direnv in the test workspace', function () {
 	const file = path.resolve(workspaceRoot, '.envrc')
@@ -58,8 +58,8 @@ describe('direnv in the test workspace', function () {
 		const direnv = new DirenvService()
 		await direnv.allow(file)
 		const patch = await direnv.dumpPatch()
-		const paths = watchedPaths(patch)
-		assert.ok(paths.includes(file))
+		const paths = extractWatchedPaths(patch)
+		assert.ok(paths !== undefined && paths.includes(file))
 	})
 
 	it('fails when the direnv executable is missing', async function () {

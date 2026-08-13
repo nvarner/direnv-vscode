@@ -12,15 +12,8 @@ export class BlockedError extends Error {
 	/**
 	 *
 	 * @param path The path of the blocked .envrc
-	 * @param internalPatch Patch of internal environment variables. Since we
-	 * were blocked, direnv isn't going to provide a patch of the environment
-	 * variables the user probably cares about, but it will set some internal
-	 * variables to keep track of its own state, which we may want to inspect.
 	 */
-	constructor(
-		public readonly path: string,
-		public readonly internalPatch: EnvironmentPatch,
-	) {
+	constructor(public readonly path: string) {
 		super(`${path} is blocked`)
 	}
 }
@@ -69,6 +62,14 @@ export class DirenvService {
 	 * .envrc file, this is undefined.
 	 */
 	private blockedPath?: string
+
+	/**
+	 * This event fires when direnv gives us a set of paths to watch for
+	 * changes. This may fire multiple times, and there is no guarantee that
+	 * the set of paths changes each time it fires. The data of the event is the
+	 * complete set of paths to watch for.
+	 */
+	onUpdateWatchedPaths: vscode.EventEmitter<string[]> = new vscode.EventEmitter()
 
 	constructor(
 		/**
@@ -142,14 +143,17 @@ export class DirenvService {
 
 		try {
 			const { stdout } = await this.direnv(['export', 'json'])
-			return parse(stdout)
+			const patch = parse(stdout)
+			this.handleNewPatch(patch)
+			return patch
 		} catch (e) {
 			if (isStdio(e)) {
 				const found = /direnv: error (?<path>.+) is blocked./.exec(e.stderr)
 				if (found?.groups?.path) {
-					this.blockedPath = found.groups.path
 					// .envrc is blocked, let caller ask user what to do
-					throw new BlockedError(this.blockedPath, parse(e.stdout, isInternal))
+					this.blockedPath = found.groups.path
+					this.handleNewPatch(parse(e.stdout))
+					throw new BlockedError(this.blockedPath)
 				}
 			}
 			throw e
@@ -159,19 +163,29 @@ export class DirenvService {
 	private get workingDirectory(): string {
 		return this.cwdOverride ?? cwd()
 	}
+
+	/**
+	 * Update our internal state based on internal environment variables from an
+	 * environment patch direnv just put out.
+	 * @param patch The patch we just got from direnv
+	 */
+	private handleNewPatch(patch: EnvironmentPatch): void {
+		const watchedPaths = extractWatchedPaths(patch)
+		if (watchedPaths !== undefined) {
+			this.onUpdateWatchedPaths.fire(watchedPaths)
+		}
+	}
 }
 
-function parse(
-	stdout: string,
-	predicate: (key: string) => boolean = () => true,
-): EnvironmentPatch {
+function parse(stdout: string): EnvironmentPatch {
 	if (!stdout) return new Map()
-	// Null values mean to unset the environment variable
 	const record = JSON.parse(stdout) as Record<string, string | null>
 	return new Map(
-		Object.entries(record)
-			.filter(([key]) => predicate(key))
-			.map(([key, value]) => [key, value === null ? undefined : value]),
+		Object.entries(record).map(([key, value]) => [
+			key,
+			// Null means unset the environment variable
+			value === null ? undefined : value,
+		]),
 	)
 }
 
@@ -183,14 +197,17 @@ export function isInternal(key: string) {
  * Get the paths direnv is watching for changes.
  *
  * @param patch The environment patch after running direnv. This should include
- * internal environment variables, specifically DIRENV_WATCHES. If absent, or
- * this is undefined, the array of watched paths will be empty.
- * @returns Array of watched paths
+ * internal environment variables, specifically DIRENV_WATCHES. If absent, we
+ * return undefined.
+ * @returns Array of watched paths, or undefined if we couldn't extract a set of
+ * watched paths from the patch.
  */
-export function watchedPaths(patch?: EnvironmentPatch): string[] {
-	if (patch === undefined) return []
-	const watches: Watch[] = decode(patch.get('DIRENV_WATCHES')) ?? []
-	return watches.map((it) => it.path ?? it.Path).filter((it): it is string => !!it)
+export function extractWatchedPaths(patch: EnvironmentPatch): string[] | undefined {
+	if (!patch.has('DIRENV_WATCHES')) {
+		return undefined
+	}
+	const watches = decode<Watch[]>(patch.get('DIRENV_WATCHES'))
+	return watches?.map((it) => it.path ?? it.Path).filter((it): it is string => !!it)
 }
 
 function decode<T>(gzenv?: string | null): T | undefined {
